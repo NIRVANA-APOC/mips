@@ -3,8 +3,20 @@
 #![allow(unused_variables)]
 
 mod r#mod;
-use r#mod::*;
+use r#mod::{
+    cpu::{
+
+    },
+    memory::{
+
+    },
+    monitor::{
+        monitor::{init_monitor, load_entry},
+        ui::{ui_mainloop},
+    },
+};
 
 fn main() {
-    println!("Hello, world!");
+    // load_entry();
+    ui_mainloop();
 }

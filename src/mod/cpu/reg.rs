@@ -13,20 +13,26 @@ const REG_FILE: [&str; 32] = [
     ];
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct GPR{
-    gpr: Vec<u32>,
+pub struct GPR{
+    gpr: [u32; 32],
 }
 
-struct CPU{
-    gpr: GPR,
-    pc: u32,
-    hi: u32,
-    lo: u32,
+pub struct CPU{
+    pub gpr: GPR,
+    pub pc: u32,
+    pub hi: u32,
+    pub lo: u32,
+}
+
+impl CPU {
+    pub const fn new() -> Self{
+        Self { gpr: GPR::new(), pc: 0, hi: 0, lo: 0 }
+    }
 }
 
 impl GPR {
-    pub fn new() -> Self{
-        Self { gpr: vec![0; 32] }
+    pub const fn new() -> Self{
+        Self { gpr: [0; 32] }
     }
 
     fn check_index(idx: usize) -> usize{
@@ -54,7 +60,7 @@ mod test{
     #[test]
     fn gpr_init(){
         let gpr = GPR::new();
-        assert_eq!(gpr.gpr, vec![0; 32]);
+        assert_eq!(gpr.gpr, [0; 32]);
     }
 
     #[test]

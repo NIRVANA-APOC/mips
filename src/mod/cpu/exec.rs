@@ -1,4 +1,5 @@
 use super::{operand::Operands, i_type::*, j_type::*, r_type::*};
+use super::super::monitor::cpu_exec::{CpuState, CPU_STATE};
 use colored::Colorize;
 
 const FUNC_MASK: u32 = 0x0000003F;
@@ -11,16 +12,25 @@ pub fn inv(pc: u32){
     let p = instr_fetch(pc, 4).to_be_bytes();
     println!("{}", format!("invalid opcode(pc = 0x{:08x}): {:02x} {:02x} {:02x} {:02x} ...",
     pc, p[3], p[2], p[1], p[0]).red());
+    unsafe{
+        CPU_STATE = CpuState::END;
+    }
 }
 
 pub fn good_trap(pc: u32){
     // green
     println!("{}", format!("temu: HIT GOOD TRAP at $pc = 0x{:08x}", pc).green());
+    unsafe{
+        CPU_STATE = CpuState::END;
+    }
 }
 
 pub fn bad_trap(pc: u32){
     // red
     println!("{}", format!("temu: HIT BAD TRAP at $pc = 0x{:08x}", pc).red());
+    unsafe{
+        CPU_STATE = CpuState::END;
+    }
 }
 
 const OPCODE_TABLE: [fn(u32); 64] = [

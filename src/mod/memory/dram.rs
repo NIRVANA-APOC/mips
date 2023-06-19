@@ -8,7 +8,7 @@ const BURST_MASK: usize = BURST_LEN - 1;
 pub fn memcpy_with_mask(src: *const u8, dest: *mut u8, mask: *const u8, len: isize){
     unsafe{
             for i in 0..len{
-            if *mask.offset(i) as u8 != 0 {
+            if mask.offset(i) as u8 != 0 {
                 *dest.offset(i) = *src.offset(i) as u8;
             }
         }
@@ -53,7 +53,7 @@ const NR_RANK: usize = 1 << RANK_WIDTH;
 
 const HW_MEM_SIZE: usize = 1 << (COL_WIDTH + ROW_WIDTH + BANK_WIDTH + RANK_WIDTH);
 
-static mut DRAM: [[[[u8; NR_COL]; NR_ROW]; NR_BANK]; NR_RANK] = [[[[0; NR_COL]; NR_ROW]; NR_BANK]; NR_RANK];
+pub static mut DRAM: [[[[u8; NR_COL]; NR_ROW]; NR_BANK]; NR_RANK] = [[[[0; NR_COL]; NR_ROW]; NR_BANK]; NR_RANK];
 
 #[derive(Clone, Copy)]
 struct RB{
@@ -70,7 +70,7 @@ impl RB {
 
 static mut ROW_BUFS: [[RB; NR_BANK]; NR_RANK] = [[RB::new(); NR_BANK]; NR_RANK];
 
-fn init_ddr3(){
+pub fn init_ddr3(){
     for i in 0..NR_RANK{
         for j in 0..NR_BANK{
             unsafe{
@@ -133,7 +133,7 @@ pub fn ddr3_write(addr: u32, data: *const u8, mask: *const u8){
 
 pub unsafe fn unalign_rw(addr: *const u8, len: usize) -> u32{
     // 输入一个u8的指针，将其转换为u32类型并按照len返回有效部分
-    let addr = *addr as u32;
+    let addr = *(addr as *const u32);
     match len {
         1 => addr & 0x00_00_00_FF,
         2 => addr & 0x00_00_FF_FF,
@@ -155,7 +155,7 @@ pub fn dram_read(addr: u32, len: usize) -> u32{
         }
     }
     unsafe{
-        unalign_rw(temp.as_ptr().offset(offset as isize), 4)
+        unalign_rw(temp.as_ptr().offset(offset as isize), len)
     }
 }
 
@@ -165,7 +165,7 @@ pub fn dram_write(addr: u32, len: usize, data: u32){
     let mut mask: [u8; 2 * BURST_LEN] = [0; 2 * BURST_LEN];
 
     unsafe{
-        ptr::copy_nonoverlapping(data as *const u8, temp.as_mut_ptr().offset(offset as isize), 4);
+        *(temp.as_mut_ptr().offset(offset as isize) as *mut u32) = data;
         ptr::write_bytes(mask.as_mut_ptr().offset(offset as isize), 1, len);
 
         ddr3_write(addr, temp.as_ptr(), mask.as_ptr());
@@ -181,5 +181,76 @@ pub fn clear_dram(){
         ptr::write_bytes(DRAM.as_mut_ptr(), 0, DRAM.len());
         ptr::write_bytes(ROW_BUFS.as_mut_ptr(), 0, ROW_BUFS.len());
         init_ddr3();
+    }
+}
+
+
+mod test{
+    use super::*;
+
+    #[test]
+    fn ptr_test(){
+        let a = 114514_u32;
+        let a_ptr = &a.to_ne_bytes().as_mut_ptr();
+
+        unsafe{
+            println!("1@ {}", *(*a_ptr as *const u32));
+            unsafe fn modify(addr: *mut u8){
+                // *(addr as *mut u32) = 1919810;
+                let b = 1919810_u32;
+                let b_ptr = b.to_ne_bytes().as_ptr();
+                ptr::copy_nonoverlapping(b_ptr, addr, 4);
+            }
+            modify(*a_ptr);
+            println!("2@ {}", *(*a_ptr as *const u32));
+            println!("3@ {}", a);
+        }
+    }
+
+    #[test]
+    fn ddr3(){
+        let addr = 0x1fc00000;
+        let data: u32 = 0x12345678;
+        let mask: u32 = 0x10101010;
+
+        let data_ptr = data.to_ne_bytes().as_ptr();
+        let mask_ptr = mask.to_ne_bytes().as_ptr();
+
+        ddr3_write(addr, data_ptr, mask_ptr);
+        
+        let ret: u32 = 114514;
+        let ret_ptr = ret.to_ne_bytes().as_mut_ptr();
+        unsafe{
+            println!("val is: {}", *(ret_ptr as *const u32));
+        }
+        ddr3_read(addr, ret_ptr);
+        unsafe{
+            println!("{:08x}", *(ret_ptr as *const u32));
+
+            assert_eq!(*(ret_ptr as *const u32), data);
+        }
+    }
+
+    #[test]
+    fn dram(){
+        let addr = 0x1fc00000;
+        let data: u32 = 0x12345678;
+        let mask: u32 = 0x10101010;
+
+        let data_ptr = data.to_ne_bytes().as_ptr();
+        let mask_ptr = mask.to_ne_bytes().as_ptr();
+
+        // dram_write(addr, 1, data);
+        dram_write(0x1fc00002, 1, data);
+        
+        let read_1 = dram_read(addr, 1);
+        let read_2 = dram_read(addr, 2);
+        let read_3 = dram_read(addr, 3);
+        let read_4 = dram_read(addr, 4);
+
+        println!("{:08x}", read_1);
+        println!("{:08x}", read_2);
+        println!("{:08x}", read_3);
+        println!("{:08x}", read_4);
     }
 }
