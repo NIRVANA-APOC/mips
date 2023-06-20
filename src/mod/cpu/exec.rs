@@ -1,11 +1,27 @@
 use super::{operand::Operands, i_type::*, j_type::*, r_type::*};
 use super::super::monitor::cpu_exec::{CpuState, CPU_STATE};
+use super::super::memory::memory::mem_read;
 use colored::Colorize;
 
-const FUNC_MASK: u32 = 0x0000003F;
+pub const FUNC_MASK: u32 = 0x0000003F;
+pub const RS_MASK: u32 = 0x03E00000;
+pub const RT_MASK: u32 = 0x001F0000;
+pub const RD_MASK: u32 = 0x0000F800;
+pub const SHAMT_MASK: u32 = 0x000007C0;
+pub const IMM_MASK:u32 = 0x0000FFFF;
+pub const INDEX_MASK:u32 = 0x03FFFFFF;
 
-static mut INSTR: u32 = 0;
-static mut OPS_DECODED: Operands = Operands::new();
+pub const OPCODE_SIZE: u32 = 6;
+pub const FUNC_SIZE: u32 = 6;
+pub const RS_SIZE: u32 = 5;
+pub const RT_SIZE: u32 = 5;
+pub const RD_SIZE: u32 = 5;
+pub const SHAMT_SIZE: u32 = 5;
+pub const IMM_SIZE: u32 = 16;
+pub const INDEX_SIZE: u32 = 26;
+
+pub static mut INSTR: u32 = 0;
+pub static mut OPS_DECODED: Operands = Operands::new();
 
 pub fn inv(pc: u32){
     // red
@@ -72,13 +88,14 @@ const _2BYTE_OPCODE_TABLE: [fn(u32); 64] = [
 ];
 
 pub fn instr_fetch(addr: u32, len: usize) -> u32{
-    0x12345678
+    mem_read(addr, len)
 }
 
 pub fn exec(pc: u32){
     unsafe{
         INSTR = instr_fetch(pc, 4);
         OPS_DECODED.opcode = INSTR >> 26;
+        println!("func1: {:02x}", OPS_DECODED.opcode);
         OPCODE_TABLE[OPS_DECODED.opcode as usize](pc);
     }
 }
@@ -86,15 +103,19 @@ pub fn exec(pc: u32){
 pub fn _2byte_esc(pc: u32){
     unsafe{
         OPS_DECODED.func = INSTR & FUNC_MASK;
+        println!("func2: {:02x}", OPS_DECODED.func);
         _2BYTE_OPCODE_TABLE[OPS_DECODED.func as usize](pc);
     }
 }
 
 mod test{
     use super::*;
+    use super::super::super::monitor::monitor::load_entry;
     #[test]
     fn inv_trap(){
-        let pc = 0xbfc00000;
+        let pc = 0xbfc00000 & 0x1F_FF_FF_FF;
+        load_entry();
+        println!("0x{:08x}: {:08x}", pc, mem_read(pc, 4));
         inv(pc);
         good_trap(pc);
         bad_trap(pc);

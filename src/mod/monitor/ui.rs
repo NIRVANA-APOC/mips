@@ -1,6 +1,8 @@
 use std::io::Write;
 
 use colored::Colorize;
+use crate::r#mod::cpu::r_type::add;
+
 use super::cpu_exec::cpu_exec;
 
 #[derive(PartialEq, Eq)]
@@ -53,6 +55,12 @@ fn cmd_c(args: &String) -> UiState{
 fn cmd_q(args: &String) -> UiState{
     println!("{}", "mips exit successfully ...".green());
     UiState::EXIT
+}
+
+fn cmd_x(args: &String) -> UiState{
+    let arg: Vec<&str> = args.split(" ").collect();
+    let addr = arg[1];
+    UiState::OK
 }
 
 pub fn ui_mainloop(){

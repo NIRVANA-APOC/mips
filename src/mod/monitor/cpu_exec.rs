@@ -9,14 +9,14 @@ pub enum CpuState{
 
 pub static mut CPU: CPU = CPU::new();
 pub static mut CPU_STATE: CpuState = CpuState::STOP;
-static mut ASSEMBLY: String = String::new();
-static mut ASM_BUF: String = String::new();
+pub static mut ASSEMBLY: String = String::new();
+pub static mut ASM_BUF: String = String::new();
 
 pub fn print_bin_instr(pc: u32) {
     unsafe{
         ASM_BUF.clear();
         ASM_BUF = format!("{:08x}:   ", pc);
-        for i in 3..=0 {
+        for i in (0..4).rev() {
             ASM_BUF += format!("{:02x} ", instr_fetch(pc + i, 1)).as_str();
         }
         // sprintf(asm_buf + l, "%*.s", 8, "");
@@ -36,7 +36,9 @@ pub unsafe fn cpu_exec(n: u32){
         CPU.pc += 4;
 
         print_bin_instr(pc);
+        ASM_BUF += " => ";
         ASM_BUF += ASSEMBLY.as_str();
+        println!("{}", ASM_BUF.blue());
         
         if CPU_STATE != CpuState::RUNNING {
             return;

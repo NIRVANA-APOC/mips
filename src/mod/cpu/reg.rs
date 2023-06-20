@@ -5,7 +5,7 @@ enum REG {
     RT8, RT9, RK0, RK1, RGP, RSP, RFP, RRA,
 }
 
-const REG_FILE: [&str; 32] = [
+pub const REG_NAME: [&str; 32] = [
     "$zero", "$at", "$v0", "$v1", "$a0", "$a1", "$a2", "$a3", 
     "$t0", "$t1", "$t2", "$t3", "$t4", "$t5", "$t6", "$t7", 
     "$s0", "$s1", "$s2", "$s3", "$s4", "$s5", "$s6", "$s7", 
@@ -50,6 +50,22 @@ impl GPR {
 
     pub fn reg_b(&self, reg: usize) -> u8{
         self.gpr[GPR::check_index(reg)] as u8
+    }
+
+    pub fn set_w(&mut self, reg: usize, val: u32){
+        self.gpr[GPR::check_index(reg)] = val;
+    }
+
+    pub fn set_h(&mut self, reg: usize, val: u16){
+        unsafe{
+            *(self.gpr[GPR::check_index(reg)] as *mut u16) = val;
+        }
+    }
+
+    pub fn set_b(&mut self, reg: usize, val: u8){
+        unsafe{
+            *(self.gpr[GPR::check_index(reg)] as *mut u8) = val;
+        }
     }
 }
 

@@ -5,11 +5,11 @@ use crate::r#mod::cpu::r_type::add;
 const BURST_LEN: usize = 8;
 const BURST_MASK: usize = BURST_LEN - 1;
 
-pub fn memcpy_with_mask(src: *const u8, dest: *mut u8, mask: *const u8, len: isize){
+pub fn memcpy_with_mask(src: *const u8, dst: *mut u8, mask: *const u8, len: isize){
     unsafe{
             for i in 0..len{
             if mask.offset(i) as u8 != 0 {
-                *dest.offset(i) = *src.offset(i) as u8;
+                *dst.offset(i) = *src.offset(i) as u8;
             }
         }
     }
@@ -30,19 +30,19 @@ impl DramAddr {
     }
 
     pub fn col(&self) -> u32{
-        self.addr & (NR_COL - 1) as u32
+        self.addr & ((1 << COL_WIDTH) - 1) as u32
     }
 
     pub fn row(&self) -> u32{
-        self.addr & (NR_ROW - 1) as u32
+        (self.addr >> COL_WIDTH) & ((1 << ROW_WIDTH) - 1) as u32
     }
 
     pub fn bank(&self) -> u32{
-        self.addr & (NR_BANK - 1) as u32
+        (self.addr >> (COL_WIDTH + ROW_WIDTH)) & ((1 << BANK_WIDTH) - 1) as u32
     }
 
     pub fn rank(&self) -> u32{
-        self.addr & (NR_RANK - 1) as u32
+        (self.addr >> (COL_WIDTH + ROW_WIDTH + BANK_WIDTH)) & ((1 << RANK_WIDTH) - 1) as u32
     }
 }
 
@@ -54,6 +54,7 @@ const NR_RANK: usize = 1 << RANK_WIDTH;
 const HW_MEM_SIZE: usize = 1 << (COL_WIDTH + ROW_WIDTH + BANK_WIDTH + RANK_WIDTH);
 
 pub static mut DRAM: [[[[u8; NR_COL]; NR_ROW]; NR_BANK]; NR_RANK] = [[[[0; NR_COL]; NR_ROW]; NR_BANK]; NR_RANK];
+// pub const DRAM_SIZE: usize = NR_COL * NR_ROW * NR_BANK * NR_RANK;
 
 #[derive(Clone, Copy)]
 struct RB{
@@ -91,8 +92,7 @@ pub fn ddr3_read(addr: u32, data: *mut u8){
     let col = temp.col() as usize;
 
     unsafe{
-        let row_bufs = &ROW_BUFS[rank][bank];
-        if !(row_bufs.valid && row_bufs.row_idx == row as i32){
+        if !(ROW_BUFS[rank][bank].valid && ROW_BUFS[rank][bank].row_idx == row as i32){
             /* read a row into row buffer */
             ptr::copy_nonoverlapping(DRAM[rank][bank][row].as_ptr(), ROW_BUFS[rank][bank].buf.as_mut_ptr(), NR_COL);
             ROW_BUFS[rank][bank].row_idx = row as i32;
@@ -114,9 +114,10 @@ pub fn ddr3_write(addr: u32, data: *const u8, mask: *const u8){
     let row = temp.row() as usize;
     let col = temp.col() as usize;
 
+    println!("addr: {:08x}, rank: {:x}, bank: {:x}, row: {:x}, col: {:x}", addr, rank, bank, row, col);
+    unsafe {println!("offset: {:08x}", (&DRAM[rank][bank][row][col] as *const u8).offset_from(DRAM.as_ptr() as *const u8));}
     unsafe{
-        let row_bufs = &ROW_BUFS[rank][bank];
-        if !(row_bufs.valid && row_bufs.row_idx == row as i32){
+        if !(ROW_BUFS[rank][bank].valid && ROW_BUFS[rank][bank].row_idx == row as i32){
             /* read a row into row buffer */
             ptr::copy_nonoverlapping(DRAM[rank][bank][row].as_ptr(), ROW_BUFS[rank][bank].buf.as_mut_ptr(), NR_COL);
             ROW_BUFS[rank][bank].row_idx = row as i32;

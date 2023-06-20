@@ -11,12 +11,12 @@ use r#mod::{
 
     },
     monitor::{
-        monitor::{init_monitor, load_entry},
+        monitor::restart,
         ui::{ui_mainloop},
     },
 };
 
 fn main() {
-    // load_entry();
+    restart();
     ui_mainloop();
 }
