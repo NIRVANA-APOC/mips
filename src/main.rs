@@ -3,20 +3,14 @@
 #![allow(unused_variables)]
 
 mod r#mod;
-use r#mod::{
-    cpu::{
-
-    },
-    memory::{
-
-    },
-    monitor::{
-        monitor::restart,
-        ui::{ui_mainloop},
-    },
+use r#mod::monitor::{
+    monitor::restart,
+    ui::{ui_mainloop, UiState},
 };
 
 fn main() {
     restart();
-    ui_mainloop();
+    while ui_mainloop() == UiState::RESTART {
+        restart();
+    }
 }
