@@ -1,173 +1,147 @@
 use std::io::Write;
 
-use crate::emu::cpu::reg::REG_NAME;
+use crate::emu::cpu::exec::Emulator;
+use crate::emu::cpu::reg::{get_id, REG_NAME};
 use colored::Colorize;
-
-use super::super::cpu::reg::get_id;
-use super::cpu_exec::{cpu_exec, CPU};
 
 #[derive(PartialEq, Eq)]
 pub enum UiState {
-    OK,
-    EXCEPTION,
-    ERR,
-    EXIT,
-    RESTART,
+    Ok,
+    Exception,
+
+    Exit,
+    Restart,
 }
 
-static mut DEBUG_FLAG: bool = false;
-pub fn dbg_option() {
-    unsafe {
-        if DEBUG_FLAG {
-            println!("{}", "DEBUG OFF".bright_blue());
-        } else {
-            println!("{}", "DEBUG ON".bright_blue());
-        }
-        DEBUG_FLAG = !DEBUG_FLAG;
+pub fn dbg_option(emu: &mut Emulator) {
+    if emu.debug {
+        println!("{}", "DEBUG OFF".bright_blue());
+    } else {
+        println!("{}", "DEBUG ON".bright_blue());
     }
+    emu.debug = !emu.debug;
 }
 
-pub fn dbg_println(msg: String) {
-    unsafe {
-        if DEBUG_FLAG {
-            println!("{}", msg.yellow());
-        }
-    }
-}
-
-struct CMD {
+struct Cmd {
     name: [&'static str; 2],
     description: &'static str,
-    handler: fn(&Vec<&str>) -> UiState,
+    handler: fn(&mut Emulator, &[&str]) -> UiState,
 }
 
-impl CMD {
+impl Cmd {
     pub const fn from(
         name: [&'static str; 2],
         description: &'static str,
-        handler: fn(&Vec<&str>) -> UiState,
+        handler: fn(&mut Emulator, &[&str]) -> UiState,
     ) -> Self {
         Self {
-            name: name,
-            description: description,
-            handler: handler,
+            name,
+            description,
+            handler,
         }
     }
 
-    pub fn check_name(&self, name: &str) -> bool{
-        for n in self.name {
-            if n == name {
-                return true;
-            }
-        }
-        false
+    pub fn check_name(&self, name: &str) -> bool {
+        self.name.contains(&name)
     }
 }
 
-const CMD_TABLE: [CMD; 7] = [
-    CMD::from(
+const CMD_TABLE: [Cmd; 7] = [
+    Cmd::from(
         ["help", "h"],
         "Display informations about all supported commands",
         cmd_help,
     ),
-    CMD::from(["continue", "c"], "Continue the execution of the program", cmd_c),
-    CMD::from(["quit", "q"], "Exit CPU", cmd_q),
-    CMD::from(["single", "s"], "single steps", cmd_si),
-    CMD::from(["reg", "r"], "check reg", cmd_r),
-    CMD::from(["debug", "dbg"], "turn on/off debug option", cmd_dbg),
-    CMD::from(["restart", "re"], "restart cpu", cmd_re),
+    Cmd::from(
+        ["continue", "c"],
+        "Continue the execution of the program",
+        cmd_c,
+    ),
+    Cmd::from(["quit", "q"], "Exit CPU", cmd_q),
+    Cmd::from(["single", "s"], "single steps", cmd_si),
+    Cmd::from(["reg", "r"], "check reg", cmd_r),
+    Cmd::from(["debug", "dbg"], "turn on/off debug option", cmd_dbg),
+    Cmd::from(["restart", "re"], "restart cpu", cmd_re),
 ];
 
-fn cmd_help(args: &Vec<&str>) -> UiState {
+fn cmd_help(_emu: &mut Emulator, args: &[&str]) -> UiState {
     if args.len() <= 1 {
         for cmd in CMD_TABLE {
-            println!("{}", format!("{} [{}] - {}", cmd.name[0], cmd.name[1], cmd.description).yellow());
+            println!(
+                "{}",
+                format!("{} [{}] - {}", cmd.name[0], cmd.name[1], cmd.description).yellow()
+            );
         }
-        return UiState::OK;
+        UiState::Ok
     } else {
         for cmd in CMD_TABLE {
             if cmd.check_name(args[1]) {
-                println!("{}", format!("{} [{}] - {}", cmd.name[0], cmd.name[1], cmd.description).yellow());
-                return UiState::OK;
+                println!(
+                    "{}",
+                    format!("{} [{}] - {}", cmd.name[0], cmd.name[1], cmd.description).yellow()
+                );
+                return UiState::Ok;
             }
         }
-        return UiState::EXCEPTION;
+        UiState::Exception
     }
 }
 
-fn cmd_c(args: &Vec<&str>) -> UiState {
-    unsafe {
-        cpu_exec(u32::MAX);
-    }
-    UiState::OK
+fn cmd_c(emu: &mut Emulator, _args: &[&str]) -> UiState {
+    emu.cpu_exec(u32::MAX);
+    UiState::Ok
 }
 
-fn cmd_q(args: &Vec<&str>) -> UiState {
+fn cmd_q(_emu: &mut Emulator, _args: &[&str]) -> UiState {
     println!("{}", "mips exit successfully ...".green());
-    UiState::EXIT
+    UiState::Exit
 }
 
-fn cmd_si(args: &Vec<&str>) -> UiState {
-    unsafe { cpu_exec(1) };
-    UiState::OK
+fn cmd_si(emu: &mut Emulator, _args: &[&str]) -> UiState {
+    emu.cpu_exec(1);
+    UiState::Ok
 }
 
-fn cmd_r(args: &Vec<&str>) -> UiState {
-    unsafe {
-        if args.len() <= 1 {
-            for (idx, reg) in REG_NAME.iter().enumerate() {
-                println!("{}", format!("{}: 0x{:08x}", reg, CPU.gpr.reg_w(idx)));
-            }
-        } else {
-            if args[1].starts_with("$") {
-                println!(
-                    "{}",
-                    format!("{}: 0x{:08x}", args[1], CPU.gpr.reg_w(get_id(args[1])))
-                );
-            } else {
-                let mut reg = String::from("$");
-                reg += args[1];
-                println!(
-                    "{}",
-                    format!("{}: 0x{:08x}", reg, CPU.gpr.reg_w(get_id(reg.as_str())))
-                );
-            }
+fn cmd_r(emu: &mut Emulator, args: &[&str]) -> UiState {
+    if args.len() <= 1 {
+        for (idx, reg) in REG_NAME.iter().enumerate() {
+            println!("{}: 0x{:08x}", reg, emu.cpu.gpr.read(idx));
         }
+    } else if args[1].starts_with('$') {
+        println!("{}: 0x{:08x}", args[1], emu.cpu.gpr.read(get_id(args[1])));
+    } else {
+        let reg = format!("${}", args[1]);
+        println!("{}: 0x{:08x}", reg, emu.cpu.gpr.read(get_id(&reg)));
     }
-    UiState::OK
+    UiState::Ok
 }
 
-fn cmd_x(args: &Vec<&str>) -> UiState {
-    let addr = args[1];
-    UiState::OK
+fn cmd_dbg(emu: &mut Emulator, _args: &[&str]) -> UiState {
+    dbg_option(emu);
+    UiState::Ok
 }
 
-fn cmd_dbg(args: &Vec<&str>) -> UiState {
-    dbg_option();
-    UiState::OK
+fn cmd_re(_emu: &mut Emulator, _args: &[&str]) -> UiState {
+    UiState::Restart
 }
 
-fn cmd_re(args: &Vec<&str>) -> UiState {
-    UiState::RESTART
-}
-
-pub fn ui_mainloop() -> UiState {
-    let mut state = UiState::OK;
-    while state != UiState::EXIT && state != UiState::RESTART {
-        print!("{}", format!("(Azathoth)>>> ").green());
+pub fn ui_mainloop(emu: &mut Emulator) -> UiState {
+    let mut state = UiState::Ok;
+    while state != UiState::Exit && state != UiState::Restart {
+        print!("{}", "(Azathoth)>>> ".green());
         std::io::stdout().flush().unwrap();
-        let mut args = String::new();
-        std::io::stdin().read_line(&mut args).unwrap();
-        let args: Vec<&str> = args.trim().split(" ").collect();
-        let mut _runover = false;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap();
+        let args: Vec<&str> = input.trim().split(' ').collect();
+        let mut handled = false;
         for cmd in CMD_TABLE {
             if cmd.check_name(args[0]) {
-                state = (cmd.handler)(&args);
-                _runover = true;
+                state = (cmd.handler)(emu, &args);
+                handled = true;
                 break;
             }
         }
-        if !_runover {
+        if !handled {
             println!("{}", format!("Unknown Command '{}'", args[0]).red());
         }
     }

@@ -1,40 +1,16 @@
-pub enum OPType {
-    REG,
-    IMM,
-    JUMP,
-}
-
-const OP_STR_SIZE: usize = 40;
-
+/// 单条指令操作数。
+#[derive(Debug, Clone, Copy)]
 pub struct Operand {
-    pub ty: OPType,
-    reg_or_imm: u32,
     pub val: u32,
+    reg_or_imm: u32,
 }
 
 impl Operand {
     pub const fn new() -> Self {
         Self {
-            ty: OPType::IMM,
-            reg_or_imm: 0,
             val: 0,
+            reg_or_imm: 0,
         }
-    }
-
-    pub fn reg(&mut self) -> u32{
-        self.reg_or_imm
-    }
-
-    pub fn imm(&mut self) -> u32{
-        self.reg_or_imm
-    }
-
-    pub fn simm(&mut self) -> i32{
-        self.reg_or_imm as i32
-    }
-
-    pub fn instr_index(&mut self) -> i32{
-        self.reg_or_imm as i32
     }
 
     pub fn get_reg(&self) -> usize {
@@ -42,14 +18,10 @@ impl Operand {
     }
 
     pub fn get_imm(&self) -> u32 {
-        self.reg_or_imm as u32
+        self.reg_or_imm
     }
 
     pub fn get_simm(&self) -> i32 {
-        self.reg_or_imm as i32
-    }
-
-    pub fn get_instr_index(&self) -> i32 {
         self.reg_or_imm as i32
     }
 
@@ -60,16 +32,10 @@ impl Operand {
     pub fn set_imm(&mut self, imm: u32) {
         self.reg_or_imm = imm;
     }
-
-    pub fn set_simm(&mut self, simm: u32) {
-        self.reg_or_imm = simm;
-    }
-
-    pub fn set_instr_index(&mut self, instr_index: u32) {
-        self.reg_or_imm = instr_index;
-    }
 }
 
+/// 解码后的操作数集合。
+#[derive(Debug, Clone, Copy)]
 pub struct Operands {
     pub opcode: u32,
     pub func: u32,

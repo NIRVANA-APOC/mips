@@ -1,16 +1,12 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
-
 mod emu;
-use emu::monitor::{
-    monitor::restart,
-    ui::{ui_mainloop, UiState},
-};
+
+use emu::cpu::exec::Emulator;
+use emu::monitor::{system::restart, ui::ui_mainloop};
 
 fn main() {
-    restart();
-    while ui_mainloop() == UiState::RESTART {
-        restart();
+    let mut emu = Emulator::new();
+    restart(&mut emu);
+    while ui_mainloop(&mut emu) == emu::monitor::ui::UiState::Restart {
+        restart(&mut emu);
     }
 }

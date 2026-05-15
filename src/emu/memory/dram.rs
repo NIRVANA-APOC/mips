@@ -1,50 +1,12 @@
 use colored::Colorize;
-use std::{env::consts, ops::BitAnd, ptr, usize};
 
-use crate::emu::cpu::r_type::add;
 const BURST_LEN: usize = 8;
 const BURST_MASK: usize = BURST_LEN - 1;
-
-pub fn memcpy_with_mask(src: *const u8, dst: *mut u8, mask: *const u8, len: isize) {
-    unsafe {
-        for i in 0..len {
-            if *mask.offset(i) != 0 {
-                *dst.offset(i) = *src.offset(i);
-            }
-        }
-    }
-}
 
 const COL_WIDTH: usize = 10;
 const ROW_WIDTH: usize = 10;
 const BANK_WIDTH: usize = 3;
 const RANK_WIDTH: usize = 29 - COL_WIDTH - ROW_WIDTH - BANK_WIDTH;
-
-struct DramAddr {
-    addr: u32,
-}
-
-impl DramAddr {
-    pub const fn new() -> Self {
-        Self { addr: 0 }
-    }
-
-    pub fn col(&self) -> u32 {
-        self.addr & ((1 << COL_WIDTH) - 1) as u32
-    }
-
-    pub fn row(&self) -> u32 {
-        (self.addr >> COL_WIDTH) & ((1 << ROW_WIDTH) - 1) as u32
-    }
-
-    pub fn bank(&self) -> u32 {
-        (self.addr >> (COL_WIDTH + ROW_WIDTH)) & ((1 << BANK_WIDTH) - 1) as u32
-    }
-
-    pub fn rank(&self) -> u32 {
-        (self.addr >> (COL_WIDTH + ROW_WIDTH + BANK_WIDTH)) & ((1 << RANK_WIDTH) - 1) as u32
-    }
-}
 
 const NR_COL: usize = 1 << COL_WIDTH;
 const NR_ROW: usize = 1 << ROW_WIDTH;
@@ -53,266 +15,204 @@ const NR_RANK: usize = 1 << RANK_WIDTH;
 
 const HW_MEM_SIZE: usize = 1 << (COL_WIDTH + ROW_WIDTH + BANK_WIDTH + RANK_WIDTH);
 
-pub static mut DRAM: [[[[u8; NR_COL]; NR_ROW]; NR_BANK]; NR_RANK] =
-    [[[[0; NR_COL]; NR_ROW]; NR_BANK]; NR_RANK];
-// pub const DRAM_SIZE: usize = NR_COL * NR_ROW * NR_BANK * NR_RANK;
-
-#[derive(Clone, Copy)]
-struct RB {
-    buf: [u8; NR_COL],
+#[derive(Clone)]
+struct RowBuf {
+    buf: Vec<u8>,
     row_idx: i32,
     valid: bool,
 }
 
-impl RB {
-    pub const fn new() -> Self {
+impl RowBuf {
+    fn new() -> Self {
         Self {
-            buf: [0; NR_COL],
+            buf: vec![0; NR_COL],
             row_idx: 0,
             valid: false,
         }
     }
 }
 
-static mut ROW_BUFS: [[RB; NR_BANK]; NR_RANK] = [[RB::new(); NR_BANK]; NR_RANK];
+/// DDR3 DRAM 模拟器，含 row buffer 机制。
+pub struct Memory {
+    dram: Vec<u8>,
+    row_bufs: Vec<Vec<RowBuf>>,
+}
 
-pub fn init_ddr3() {
-    for i in 0..NR_RANK {
-        for j in 0..NR_BANK {
-            unsafe {
-                ROW_BUFS[i][j].valid = false;
+impl Memory {
+    pub fn new() -> Self {
+        let mut row_bufs = Vec::with_capacity(NR_RANK);
+        for _ in 0..NR_RANK {
+            let mut bank = Vec::with_capacity(NR_BANK);
+            for _ in 0..NR_BANK {
+                bank.push(RowBuf::new());
+            }
+            row_bufs.push(bank);
+        }
+        Self {
+            dram: vec![0; HW_MEM_SIZE],
+            row_bufs,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn clear(&mut self) {
+        self.dram.fill(0);
+        for rank in &mut self.row_bufs {
+            for buf in rank {
+                buf.valid = false;
             }
         }
     }
-}
 
-pub fn ddr3_read(addr: u32, data: *mut u8) {
-    assert!(
-        addr < HW_MEM_SIZE as u32,
-        "{}",
-        format!(
-            "physical address {:08x} is outside of the physical memory!",
-            addr
-        )
-        .red()
-    );
+    fn dram_addr(addr: u32) -> (usize, usize, usize, usize) {
+        let col = (addr as usize) & ((1 << COL_WIDTH) - 1);
+        let row = ((addr as usize) >> COL_WIDTH) & ((1 << ROW_WIDTH) - 1);
+        let bank = ((addr as usize) >> (COL_WIDTH + ROW_WIDTH)) & ((1 << BANK_WIDTH) - 1);
+        let rank =
+            ((addr as usize) >> (COL_WIDTH + ROW_WIDTH + BANK_WIDTH)) & ((1 << RANK_WIDTH) - 1);
+        (rank, bank, row, col)
+    }
 
-    let mut temp = DramAddr::new();
-    temp.addr = addr & !(BURST_MASK as u32);
-    let rank = temp.rank() as usize;
-    let bank = temp.bank() as usize;
-    let row = temp.row() as usize;
-    let col = temp.col() as usize;
+    fn dram_offset(rank: usize, bank: usize, row: usize) -> usize {
+        ((rank * NR_BANK + bank) * NR_ROW + row) * NR_COL
+    }
 
-    unsafe {
-        if !(ROW_BUFS[rank][bank].valid && ROW_BUFS[rank][bank].row_idx == row as i32) {
-            /* read a row into row buffer */
-            ptr::copy_nonoverlapping(
-                DRAM[rank][bank][row].as_ptr(),
-                ROW_BUFS[rank][bank].buf.as_mut_ptr(),
-                NR_COL,
-            );
-            ROW_BUFS[rank][bank].row_idx = row as i32;
-            ROW_BUFS[rank][bank].valid = true;
+    fn ddr3_read(&mut self, addr: u32, data: &mut [u8]) {
+        assert!(
+            addr < HW_MEM_SIZE as u32,
+            "{}",
+            format!(
+                "physical address {:08x} is outside of the physical memory!",
+                addr
+            )
+            .red()
+        );
+        assert_eq!(data.len(), BURST_LEN);
+
+        let aligned = addr & !(BURST_MASK as u32);
+        let (rank, bank, row, col) = Self::dram_addr(aligned);
+
+        let rb = &mut self.row_bufs[rank][bank];
+        if !(rb.valid && rb.row_idx == row as i32) {
+            let off = Self::dram_offset(rank, bank, row);
+            rb.buf.copy_from_slice(&self.dram[off..off + NR_COL]);
+            rb.row_idx = row as i32;
+            rb.valid = true;
         }
 
-        /* burst read */
-        ptr::copy_nonoverlapping(
-            ROW_BUFS[rank][bank].buf.as_ptr().offset(col as isize),
-            data,
-            BURST_LEN,
-        );
+        data.copy_from_slice(&rb.buf[col..col + BURST_LEN]);
     }
-}
 
-pub fn ddr3_write(addr: u32, data: *const u8, mask: *const u8) {
-    assert!(
-        addr < HW_MEM_SIZE as u32,
-        "{}",
-        format!(
-            "physical address {:08x} is outside of the physical memory!",
-            addr
-        )
-        .red()
-    );
-
-    let mut temp = DramAddr::new();
-    temp.addr = addr & !(BURST_MASK as u32);
-    let rank = temp.rank() as usize;
-    let bank = temp.bank() as usize;
-    let row = temp.row() as usize;
-    let col = temp.col() as usize;
-
-    println!(
-        "addr: {:08x}, rank: {:x}, bank: {:x}, row: {:x}, col: {:x}",
-        addr, rank, bank, row, col
-    );
-    unsafe {
-        println!(
-            "offset: {:08x}",
-            (&DRAM[rank][bank][row][col] as *const u8).offset_from(DRAM.as_ptr() as *const u8)
+    fn ddr3_write(&mut self, addr: u32, data: &[u8], mask: &[u8]) {
+        assert!(
+            addr < HW_MEM_SIZE as u32,
+            "{}",
+            format!(
+                "physical address {:08x} is outside of the physical memory!",
+                addr
+            )
+            .red()
         );
-    }
-    unsafe {
-        if !(ROW_BUFS[rank][bank].valid && ROW_BUFS[rank][bank].row_idx == row as i32) {
-            /* read a row into row buffer */
-            ptr::copy_nonoverlapping(
-                DRAM[rank][bank][row].as_ptr(),
-                ROW_BUFS[rank][bank].buf.as_mut_ptr(),
-                NR_COL,
-            );
-            ROW_BUFS[rank][bank].row_idx = row as i32;
-            ROW_BUFS[rank][bank].valid = true;
+        assert_eq!(data.len(), BURST_LEN);
+        assert_eq!(mask.len(), BURST_LEN);
+
+        let aligned = addr & !(BURST_MASK as u32);
+        let (rank, bank, row, col) = Self::dram_addr(aligned);
+
+        let rb = &mut self.row_bufs[rank][bank];
+        if !(rb.valid && rb.row_idx == row as i32) {
+            let off = Self::dram_offset(rank, bank, row);
+            rb.buf.copy_from_slice(&self.dram[off..off + NR_COL]);
+            rb.row_idx = row as i32;
+            rb.valid = true;
         }
 
-        /* burst write */
-        memcpy_with_mask(
-            data,
-            ROW_BUFS[rank][bank].buf.as_mut_ptr().offset(col as isize),
-            mask,
-            BURST_LEN as isize,
-        );
+        for i in 0..BURST_LEN {
+            if mask[i] != 0 {
+                rb.buf[col + i] = data[i];
+            }
+        }
 
-        /* write back to dram */
-        ptr::copy_nonoverlapping(
-            ROW_BUFS[rank][bank].buf.as_ptr(),
-            DRAM[rank][bank][row].as_mut_ptr(),
-            NR_COL,
-        )
+        let off = Self::dram_offset(rank, bank, row);
+        self.dram[off..off + NR_COL].copy_from_slice(&rb.buf);
     }
-}
 
-pub unsafe fn unalign_rw(addr: *const u8, len: usize) -> u32 {
-    // 输入一个u8的指针，将其转换为u32类型并按照len返回有效部分
-    let addr = ptr::read_unaligned(addr as *const u32);
-    match len {
-        1 => addr & 0x00_00_00_FF,
-        2 => addr & 0x00_00_FF_FF,
-        3 => addr & 0x00_FF_FF_FF,
-        4 => addr & 0xFF_FF_FF_FF,
-        _ => 0,
+    /// 从内存读取 `len` 字节（1/2/4），按小端序返回 u32。
+    pub fn read(&mut self, addr: u32, len: usize) -> u32 {
+        let offset = (addr as usize) & BURST_MASK;
+        let mut temp = [0u8; 2 * BURST_LEN];
+
+        self.ddr3_read(addr, &mut temp[..BURST_LEN]);
+        if offset + len > BURST_LEN {
+            self.ddr3_read(addr + BURST_LEN as u32, &mut temp[BURST_LEN..]);
+        }
+
+        let mut val = 0u32;
+        for i in 0..len {
+            val |= (temp[offset + i] as u32) << (i * 8);
+        }
+        val
     }
-}
 
-pub fn dram_read(addr: u32, len: usize) -> u32 {
-    let offset = addr & BURST_MASK as u32;
-    let mut temp: [u8; 2 * BURST_LEN] = [0; 2 * BURST_LEN];
+    /// 向内存写入 `len` 字节（1/2/4），`data` 按小端序解析。
+    pub fn write(&mut self, addr: u32, len: usize, data: u32) {
+        let offset = (addr as usize) & BURST_MASK;
+        let mut temp = [0u8; 2 * BURST_LEN];
+        let mut mask = [0u8; 2 * BURST_LEN];
 
-    ddr3_read(addr, temp.as_mut_ptr());
+        for i in 0..len {
+            temp[offset + i] = ((data >> (i * 8)) & 0xFF) as u8;
+            mask[offset + i] = 1;
+        }
 
-    if offset as usize + len > BURST_LEN {
-        unsafe {
-            ddr3_read(
+        self.ddr3_write(addr, &temp[..BURST_LEN], &mask[..BURST_LEN]);
+        if offset + len > BURST_LEN {
+            self.ddr3_write(
                 addr + BURST_LEN as u32,
-                temp.as_mut_ptr().offset(BURST_LEN as isize),
+                &temp[BURST_LEN..],
+                &mask[BURST_LEN..],
             );
         }
     }
-    unsafe { unalign_rw(temp.as_ptr().offset(offset as isize), len) }
-}
 
-pub fn dram_write(addr: u32, len: usize, data: u32) {
-    let offset = addr & BURST_MASK as u32;
-    let mut temp: [u8; 2 * BURST_LEN] = [0; 2 * BURST_LEN];
-    let mut mask: [u8; 2 * BURST_LEN] = [0; 2 * BURST_LEN];
-
-    unsafe {
-        ptr::write_unaligned(temp.as_mut_ptr().offset(offset as isize) as *mut u32, data);
-        ptr::write_bytes(mask.as_mut_ptr().offset(offset as isize), 1, len);
-
-        ddr3_write(addr, temp.as_ptr(), mask.as_ptr());
-
-        if offset as usize + len > BURST_LEN {
-            ddr3_write(
-                addr + BURST_LEN as u32,
-                temp.as_ptr().offset(BURST_LEN as isize),
-                mask.as_ptr().offset(BURST_LEN as isize),
-            );
-        }
+    /// 将二进制数据加载到指定物理地址。
+    pub fn load_binary(&mut self, data: &[u8], addr: u32) {
+        let start = addr as usize;
+        self.dram[start..start + data.len()].copy_from_slice(data);
     }
 }
 
-pub fn clear_dram() {
-    unsafe {
-        ptr::write_bytes(DRAM.as_mut_ptr(), 0, DRAM.len());
-        ptr::write_bytes(ROW_BUFS.as_mut_ptr(), 0, ROW_BUFS.len());
-        init_ddr3();
-    }
-}
-
-mod test {
+#[cfg(test)]
+mod tests {
     use super::*;
 
     #[test]
-    fn ptr_test() {
-        let a = 114514_u32;
-        let a_bytes = a.to_ne_bytes();
-        let a_ptr = a_bytes.as_ptr() as *mut u8;
+    fn ddr3_rw() {
+        let mut mem = Memory::new();
+        let addr = 0x1fc0_0000;
+        let data: u32 = 0x1234_5678;
 
-        unsafe {
-            println!("1@ {}", *(a_ptr as *const u32));
-            unsafe fn modify(addr: *mut u8) {
-                let b = 1919810_u32;
-                let b_bytes = b.to_ne_bytes();
-                let b_ptr = b_bytes.as_ptr();
-                ptr::copy_nonoverlapping(b_ptr, addr, 4);
-            }
-            modify(a_ptr);
-            println!("2@ {}", *(a_ptr as *const u32));
-            // Note: a still holds original value since a_bytes is a copy
-            println!("3@ {}", a);
-        }
+        mem.write(addr, 4, data);
+        let ret = mem.read(addr, 4);
+        assert_eq!(ret, data);
     }
 
     #[test]
-    fn ddr3() {
-        clear_dram();
-        init_ddr3();
+    fn dram_partial_rw() {
+        let mut mem = Memory::new();
+        let addr = 0x1fc0_0000;
 
-        let addr = 0x1fc00000;
-        let data: u32 = 0x12345678;
-        let mask: u32 = 0x10101010;
-
-        let data_bytes = data.to_ne_bytes();
-        let mask_bytes = mask.to_ne_bytes();
-        let mut data_buf: [u8; 8] = [0; 8];
-        let mut mask_buf: [u8; 8] = [0; 8];
-        data_buf[..4].copy_from_slice(&data_bytes);
-        mask_buf[..4].copy_from_slice(&mask_bytes);
-        let data_ptr = data_buf.as_ptr();
-        let mask_ptr = mask_buf.as_ptr();
-
-        ddr3_write(addr, data_ptr, mask_ptr);
-
-        let ret: u32 = 114514;
-        let mut ret_bytes = ret.to_ne_bytes();
-        let ret_ptr = ret_bytes.as_mut_ptr();
-        println!("val is: {}", ret);
-        ddr3_read(addr, ret_ptr);
-        println!("{:08x}", u32::from_ne_bytes(ret_bytes));
-        assert_eq!(u32::from_ne_bytes(ret_bytes), data);
+        mem.write(addr + 2, 1, 0xAB);
+        assert_eq!(mem.read(addr, 1), 0);
+        assert_eq!(mem.read(addr + 2, 1), 0xAB);
     }
 
     #[test]
-    fn dram() {
-        let addr = 0x1fc00000;
-        let data: u32 = 0x12345678;
-        let mask: u32 = 0x10101010;
+    fn dram_unaligned_cross_burst() {
+        let mut mem = Memory::new();
+        let addr = 0x1fc0_0007; // 距 burst 边界 1 字节
 
-        let _data_bytes = data.to_ne_bytes();
-        let _mask_bytes = mask.to_ne_bytes();
-
-        // dram_write(addr, 1, data);
-        dram_write(0x1fc00002, 1, data);
-
-        let read_1 = dram_read(addr, 1);
-        let read_2 = dram_read(addr, 2);
-        let read_3 = dram_read(addr, 3);
-        let read_4 = dram_read(addr, 4);
-
-        println!("{:08x}", read_1);
-        println!("{:08x}", read_2);
-        println!("{:08x}", read_3);
-        println!("{:08x}", read_4);
+        mem.write(addr, 2, 0xBEEF);
+        assert_eq!(mem.read(addr, 2), 0xBEEF);
     }
 }
