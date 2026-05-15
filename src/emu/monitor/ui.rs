@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use crate::r#mod::cpu::reg::REG_NAME;
+use crate::emu::cpu::reg::REG_NAME;
 use colored::Colorize;
 
 use super::super::cpu::reg::get_id;

@@ -1,15 +1,15 @@
 use colored::Colorize;
 use std::{env::consts, ops::BitAnd, ptr, usize};
 
-use crate::r#mod::cpu::r_type::add;
+use crate::emu::cpu::r_type::add;
 const BURST_LEN: usize = 8;
 const BURST_MASK: usize = BURST_LEN - 1;
 
 pub fn memcpy_with_mask(src: *const u8, dst: *mut u8, mask: *const u8, len: isize) {
     unsafe {
         for i in 0..len {
-            if mask.offset(i) as u8 != 0 {
-                *dst.offset(i) = *src.offset(i) as u8;
+            if *mask.offset(i) != 0 {
+                *dst.offset(i) = *src.offset(i);
             }
         }
     }
@@ -184,7 +184,7 @@ pub fn ddr3_write(addr: u32, data: *const u8, mask: *const u8) {
 
 pub unsafe fn unalign_rw(addr: *const u8, len: usize) -> u32 {
     // 输入一个u8的指针，将其转换为u32类型并按照len返回有效部分
-    let addr = *(addr as *const u32);
+    let addr = ptr::read_unaligned(addr as *const u32);
     match len {
         1 => addr & 0x00_00_00_FF,
         2 => addr & 0x00_00_FF_FF,
@@ -217,7 +217,7 @@ pub fn dram_write(addr: u32, len: usize, data: u32) {
     let mut mask: [u8; 2 * BURST_LEN] = [0; 2 * BURST_LEN];
 
     unsafe {
-        *(temp.as_mut_ptr().offset(offset as isize) as *mut u32) = data;
+        ptr::write_unaligned(temp.as_mut_ptr().offset(offset as isize) as *mut u32, data);
         ptr::write_bytes(mask.as_mut_ptr().offset(offset as isize), 1, len);
 
         ddr3_write(addr, temp.as_ptr(), mask.as_ptr());
@@ -246,44 +246,51 @@ mod test {
     #[test]
     fn ptr_test() {
         let a = 114514_u32;
-        let a_ptr = &a.to_ne_bytes().as_mut_ptr();
+        let a_bytes = a.to_ne_bytes();
+        let a_ptr = a_bytes.as_ptr() as *mut u8;
 
         unsafe {
-            println!("1@ {}", *(*a_ptr as *const u32));
+            println!("1@ {}", *(a_ptr as *const u32));
             unsafe fn modify(addr: *mut u8) {
-                // *(addr as *mut u32) = 1919810;
                 let b = 1919810_u32;
-                let b_ptr = b.to_ne_bytes().as_ptr();
+                let b_bytes = b.to_ne_bytes();
+                let b_ptr = b_bytes.as_ptr();
                 ptr::copy_nonoverlapping(b_ptr, addr, 4);
             }
-            modify(*a_ptr);
-            println!("2@ {}", *(*a_ptr as *const u32));
+            modify(a_ptr);
+            println!("2@ {}", *(a_ptr as *const u32));
+            // Note: a still holds original value since a_bytes is a copy
             println!("3@ {}", a);
         }
     }
 
     #[test]
     fn ddr3() {
+        clear_dram();
+        init_ddr3();
+
         let addr = 0x1fc00000;
         let data: u32 = 0x12345678;
         let mask: u32 = 0x10101010;
 
-        let data_ptr = data.to_ne_bytes().as_ptr();
-        let mask_ptr = mask.to_ne_bytes().as_ptr();
+        let data_bytes = data.to_ne_bytes();
+        let mask_bytes = mask.to_ne_bytes();
+        let mut data_buf: [u8; 8] = [0; 8];
+        let mut mask_buf: [u8; 8] = [0; 8];
+        data_buf[..4].copy_from_slice(&data_bytes);
+        mask_buf[..4].copy_from_slice(&mask_bytes);
+        let data_ptr = data_buf.as_ptr();
+        let mask_ptr = mask_buf.as_ptr();
 
         ddr3_write(addr, data_ptr, mask_ptr);
 
         let ret: u32 = 114514;
-        let ret_ptr = ret.to_ne_bytes().as_mut_ptr();
-        unsafe {
-            println!("val is: {}", *(ret_ptr as *const u32));
-        }
+        let mut ret_bytes = ret.to_ne_bytes();
+        let ret_ptr = ret_bytes.as_mut_ptr();
+        println!("val is: {}", ret);
         ddr3_read(addr, ret_ptr);
-        unsafe {
-            println!("{:08x}", *(ret_ptr as *const u32));
-
-            assert_eq!(*(ret_ptr as *const u32), data);
-        }
+        println!("{:08x}", u32::from_ne_bytes(ret_bytes));
+        assert_eq!(u32::from_ne_bytes(ret_bytes), data);
     }
 
     #[test]
@@ -292,8 +299,8 @@ mod test {
         let data: u32 = 0x12345678;
         let mask: u32 = 0x10101010;
 
-        let data_ptr = data.to_ne_bytes().as_ptr();
-        let mask_ptr = mask.to_ne_bytes().as_ptr();
+        let _data_bytes = data.to_ne_bytes();
+        let _mask_bytes = mask.to_ne_bytes();
 
         // dram_write(addr, 1, data);
         dram_write(0x1fc00002, 1, data);

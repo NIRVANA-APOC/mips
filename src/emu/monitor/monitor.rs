@@ -1,14 +1,12 @@
-use crate::r#mod::memory::memory::mem_write;
+use crate::emu::memory::memory::mem_write;
 use colored::Colorize;
 use std::io::Read;
-use std::os::windows::prelude::FileExt;
 use std::{array, ptr};
 
 use super::super::memory::dram::{clear_dram, ddr3_write, init_ddr3, DRAM};
 use super::cpu_exec::{CpuState, CPU, CPU_STATE};
 
 const ENTRY_START: u32 = 0xBF_C0_00_00;
-static mut HW_MEM: *mut u8 = 0 as *mut u8;
 
 pub fn init_monitor() {
     println!("{}", "Hello World.".green());
@@ -45,6 +43,7 @@ pub fn load_entry() {
     }
     println!("load {}", inst_file.green());
 
+    buf.clear();
     let data_file = "./bin/data.bin";
     let mut f =
         std::fs::File::open(data_file).expect(format!("Can not open '{}'", data_file).as_str());
@@ -71,7 +70,7 @@ pub fn restart() {
 }
 
 mod test {
-    use crate::r#mod::memory::memory::mem_read;
+    use crate::emu::memory::memory::mem_read;
 
     use super::*;
 
@@ -93,7 +92,7 @@ mod test {
             println!("{:02x}", DRAM[0][0][0][3]);
             println!(
                 "{:08x}",
-                *((DRAM.as_ptr() as *const u8).offset(0x1fc00000) as *const u32)
+                ptr::read_unaligned((DRAM.as_ptr() as *const u8).offset(0x1fc00000) as *const u32)
             );
             println!("{:08x}", mem_read(0x1fc00000, 4));
         }

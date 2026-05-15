@@ -2,7 +2,7 @@ use super::super::memory::memory::mem_read;
 use super::super::monitor::cpu_exec::{CpuState, CPU_STATE};
 use super::helper::*;
 use super::{i_type::*, j_type::*, operand::Operands, r_type::*};
-use crate::r#mod::monitor::ui::dbg_println;
+use crate::emu::monitor::ui::dbg_println;
 use colored::Colorize;
 
 pub static mut INSTR: u32 = 0;
@@ -88,8 +88,32 @@ pub fn _2byte_esc(pc: u32) {
 }
 
 mod test {
+    use std::ptr;
+
+    use super::super::super::cpu::reg::CPU;
+    use super::super::super::memory::dram::{clear_dram, init_ddr3, DRAM};
+    use super::super::super::memory::memory::mem_write;
+    use super::super::super::monitor::cpu_exec::{cpu_exec, CPU as CPU_GLOBAL, CPU_STATE, CpuState};
     use super::super::super::monitor::monitor::load_entry;
     use super::*;
+
+    pub unsafe fn load_instructions(instructions: &[u32]) {
+        clear_dram();
+        init_ddr3();
+        CPU_GLOBAL = CPU::new();
+        CPU_GLOBAL.hi = 0;
+        CPU_GLOBAL.lo = 0;
+        let entry = 0xBFC00000;
+        let dram_offset = (entry & 0x1F_FF_FF_FF) as isize;
+        ptr::copy_nonoverlapping(
+            instructions.as_ptr() as *const u8,
+            (DRAM.as_mut_ptr() as *mut u8).offset(dram_offset),
+            instructions.len() * 4,
+        );
+        CPU_GLOBAL.pc = entry;
+        CPU_STATE = CpuState::STOP;
+    }
+
     #[test]
     fn inv_trap() {
         let pc = 0xbfc00000 & 0x1F_FF_FF_FF;

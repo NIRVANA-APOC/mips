@@ -2,8 +2,8 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 
-mod r#mod;
-use r#mod::monitor::{
+mod emu;
+use emu::monitor::{
     monitor::restart,
     ui::{ui_mainloop, UiState},
 };

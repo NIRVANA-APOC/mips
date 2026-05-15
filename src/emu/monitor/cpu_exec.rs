@@ -5,7 +5,7 @@ use super::super::cpu::{
     reg::CPU,
 };
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum CpuState {
     STOP,
     RUNNING,
@@ -16,6 +16,7 @@ pub static mut CPU: CPU = CPU::new();
 pub static mut CPU_STATE: CpuState = CpuState::STOP;
 pub static mut ASSEMBLY: String = String::new();
 pub static mut ASM_BUF: String = String::new();
+pub static mut PC_UPDATED: bool = false;
 
 pub fn print_bin_instr(pc: u32) {
     unsafe {
@@ -43,12 +44,16 @@ pub unsafe fn cpu_exec(n: u32) {
         if CPU_STATE == CpuState::END {
             break;
         }
-        let pc = CPU.pc & 0x1F_FF_FF_FF;
+        let pc = CPU.pc;
+        let masked_pc = pc & 0x1F_FF_FF_FF;
         ASSEMBLY.clear();
-        exec(pc);
-        CPU.pc += 4;
+        PC_UPDATED = false;
+        exec(masked_pc);
+        if !PC_UPDATED {
+            CPU.pc += 4;
+        }
 
-        print_bin_instr(pc);
+        print_bin_instr(masked_pc);
         ASM_BUF += " => ";
         ASM_BUF += ASSEMBLY.as_str();
         println!("{}", ASM_BUF.blue());
